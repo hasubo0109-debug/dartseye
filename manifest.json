@@ -1,0 +1,16 @@
+{
+  "name": "ダーツアイ",
+  "short_name": "ダーツアイ",
+  "description": "カメラでダーツの刺さった位置を自動判定するダーツゲーム",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0c16",
+  "theme_color": "#0a0c16",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
