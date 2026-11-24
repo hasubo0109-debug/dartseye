@@ -1,16 +1,17 @@
 {
-  "name": "ダーツアイ",
-  "short_name": "ダーツアイ",
-  "description": "カメラでダーツの刺さった位置を自動判定するダーツゲーム",
+  "name": "DARTS EYE - カメラ自動スコア",
+  "short_name": "DARTS EYE",
+  "description": "スマホのカメラでソフトダーツボードを自動判定するスコアアプリ",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "any",
-  "background_color": "#0a0c16",
-  "theme_color": "#0a0c16",
+  "orientation": "portrait",
+  "background_color": "#f2f2f2",
+  "theme_color": "#f2f2f2",
+  "lang": "ja",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
