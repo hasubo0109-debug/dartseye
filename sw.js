@@ -1,5 +1,5 @@
 // DARTS EYE service worker — 更新したら VERSION を上げる
-const VERSION = 'darts-eye-v9';
+const VERSION = 'darts-eye-v10';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

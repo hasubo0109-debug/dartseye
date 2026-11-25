@@ -268,6 +268,7 @@ input[type=range]{width:100%;accent-color:var(--red)}
 @keyframes hue{to{background-position:300% 0}}
 .fxtext.bust .fx-main{color:var(--ink);filter:none;animation:shake .4s 2;text-decoration:line-through;text-decoration-color:var(--red)}
 @keyframes shake{25%{transform:translateX(-3vmin)}75%{transform:translateX(3vmin)}}
+#diagHud{position:fixed;left:8px;right:8px;bottom:calc(var(--sb) + 8px);z-index:80;background:#000d;color:#7CFFB2;font:11px/1.5 ui-monospace,Menlo,monospace;padding:8px 10px;white-space:pre-wrap;pointer-events:auto}
 .toast{position:fixed;left:50%;top:calc(var(--st) + 80px);transform:translateX(-50%);z-index:70;padding:10px 16px;background:var(--ink);color:#fff;border-left:3px solid var(--red);font-size:13px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw;text-align:center}
 .toast.on{opacity:1}
 </style>
@@ -380,6 +381,7 @@ input[type=range]{width:100%;accent-color:var(--red)}
 <div class="fxtext" id="fxText"></div>
 <div id="bullFx"><canvas id="bfConf"></canvas><div class="bf-band" id="bfBand"><canvas id="bfStreak"></canvas><div class="bf-flare" id="bfFlare"></div><div class="bf-text" id="bfText">S-BULL</div></div><div class="bf-ring" id="bfRing"></div></div>
 <div id="awFx"><canvas id="awCv"></canvas><div class="aw-text" id="awText"></div></div>
+<div id="diagHud" class="hidden"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -899,7 +901,7 @@ function detReinit(keepEmpty){DET.noiseH=[];DET.moveStart=0;DET.lastBig=-99;DET.
 function detRoundReset(){if(DET.occ){DET.occ.fill(0);DET.occCore.fill(0)}DET.tips=[];DET.leftover=false}
 function detResync(){if(!DET.on||DET.init||DET.paused)return;try{DET.ref=grab();DET.moving=false;DET.still=0;DET.tmap.fill(0);DET.motionSeen=false}catch(e){}}
 function statusFor(){return DET.mode==='waitClear'?(DET.leftover?'left':'clear'):DET.mode==='hold'?'hold':DET.mode==='end'?'end':'ready'}
-function detStep(){if(!DET.on||DET.paused)return;const s=DET.src||CAM.v;if(s.readyState!==undefined&&s.readyState<2)return;
+function detStep(){if(!DET.on||DET.paused)return;const s=DET.src||CAM.v;const now=performance.now();DET.dt=DET.lastT?now-DET.lastT:0;DET.lastT=now;DET.rs=s.readyState;if(s.readyState!==undefined&&s.readyState<2){DET.notReady=(DET.notReady||0)+1;return}
   let cur;try{cur=grab()}catch(e){return}
   if(!DET.prev){DET.prev=cur;return}
   DET.frame++;
@@ -908,7 +910,7 @@ function detStep(){if(!DET.on||DET.paused)return;const s=DET.src||CAM.v;if(s.rea
   const nh=DET.noiseH;if(!DET.alignBad){nh.push(mv);if(nh.length>45)nh.shift()}
   const srt=nh.slice().sort((a,b)=>a-b),base=nh.length>=8?srt[Math.floor(nh.length*.3)]:0,thr=Math.max(3,ST.settings.minBlob*.5,base*2.5+3);DET.thr=thr;
   // 待ち続け防止：小さな動きが2.3秒以上続いたら（人や手が映っていない）、そこで判定する
-  if(mv>=thr&&DET.moving&&DET.frame-DET.moveStart>25&&mv<DET.roiN*.015&&DET.lastBig<DET.frame-6){DET.still=DET.init?6:5;DET.moving=!DET.init}
+  if(mv>=thr&&DET.moving&&((DET.frame-DET.moveStart>25&&mv<DET.roiN*.015&&DET.lastBig<DET.frame-6)||DET.frame-DET.moveStart>38)){DET.forced=(DET.forced||0)+1;DET.still=DET.init?6:5;DET.moving=!DET.init}// 待ち続け防止（小さな動きが2.3秒／どんな動きでも3.5秒続いたら判定する）
   else if(mv>=thr){
     if(!DET.moving)DET.moveStart=DET.frame;if(mv>=DET.roiN*.015)DET.lastBig=DET.frame;
     DET.moving=true;DET.still=0;DET.idle=0;DET.peak=Math.max(DET.peak,mv);
@@ -941,24 +943,24 @@ function splitByTime(g,minP,depth=0){// 素早い連投：同じ塊の中で「�
   return[...splitByTime(A,minP,depth+1),...splitByTime(B,minP,depth+1)]}
 function detSettle(cur,small,peak){
   const minP=effMin(),N=DET.N,T=ST.settings.sens;
-  const done=()=>{DET.ref=cur;DET.tmap.fill(0)};
-  if(DET.mode==='hold'||DET.mode==='end'){done();return}
+  const done=()=>{DET.ref=cur;DET.tmap.fill(0)},why=r=>{DET.lastWhy=r;DET.lastWhyT=Date.now()};
+  if(DET.mode==='hold'||DET.mode==='end'){done();why('停止中');return}
   if(DET.mode==='waitClear'){const c=diffMask(cur,DET.empty);DET.lastMask=c.m;
-    if(c.cnt<Math.max(minP*1.5,DET.roiN*.0015)){DET.ref=cur;DET.empty=cur;DET.emptyTrusted=true;DET.mode='throw';DET.marks=[];detRoundReset();DET.tmap.fill(0);DET.leftover=false;DET.cb.onClear&&DET.cb.onClear()}
-    else{done();if(peak!=null&&peak>DET.roiN*.04)DET.leftover=true}return}
+    if(c.cnt<Math.max(minP*1.5,DET.roiN*.0015)){DET.ref=cur;DET.empty=cur;DET.emptyTrusted=true;DET.mode='throw';DET.marks=[];detRoundReset();DET.tmap.fill(0);DET.leftover=false;why('矢を抜いた→チェンジ');DET.cb.onClear&&DET.cb.onClear()}
+    else{done();why('抜き待ち（残り'+c.cnt+'px）');if(peak!=null&&peak>DET.roiN*.04)DET.leftover=true}return}
   const g0=gains(cur,DET.ref);
-  if(g0.some(v=>Math.abs(v-1)>.15)){done();DET.relit=true;return}// 照明が変わった：判定せず背景を取り直す
+  if(g0.some(v=>Math.abs(v-1)>.15)){done();DET.relit=true;why('明るさが変化→無視 '+g0.map(v=>v.toFixed(2)).join('/'));return}// 照明が変わった：判定せず背景を取り直す
   const d=diffMask(cur,DET.ref,g0);DET.lastMask=d.m;
   const dartLike=peak!=null&&DET.sizes.length&&peak>=Math.min(...DET.sizes)*.25;
   const missing=()=>{if(small&&DET.cb.onMissing)DET.cb.onMissing()};
-  if(d.cnt<minP){done();missing();return}
-  if(d.cnt>DET.roiN*.12){done();DET.cb.onBig&&DET.cb.onBig();return}
+  if(d.cnt<minP){done();why('変化が小さい '+d.cnt+'<'+minP);missing();return}
+  if(d.cnt>DET.roiN*.12){done();why('変化が大きすぎ '+d.cnt);DET.cb.onBig&&DET.cb.onBig();return}
   const cs=components(d.m).filter(c=>c.px.length>=2);
   const tot=cs.reduce((s,c)=>s+c.px.length,0);
   let groups=groupComps(cs).filter(g=>g.px.length>=minP);
-  {const gt=groups.reduce((a,g)=>a+g.px.length,0);if(groups.length>=6&&groups[0].px.length<gt*.3){done();return}}// 近い断片をまとめても散らばったまま＝照明のゆらぎ
+  {const gt=groups.reduce((a,g)=>a+g.px.length,0);if(groups.length>=6&&groups[0].px.length<gt*.3){done();why('散らばった変化→無視 '+groups.length+'個');return}}// 近い断片をまとめても散らばったまま＝照明のゆらぎ
   groups=groups.flatMap(g=>splitByTime(g,minP));
-  if(!groups.length){done();missing();return}
+  if(!groups.length){done();why('矢の形が無い');missing();return}
   const ge=gains(cur,DET.empty),med=DET.sizes.length?DET.sizes.slice().sort((a,b)=>a-b)[DET.sizes.length>>1]:0;
   const hits=[];let removed=0,wob=0;
   for(const g of groups){const n=g.px.length;
@@ -974,7 +976,7 @@ function detSettle(cur,small,peak){
     if(DET.occCore[tip.idx]&&DET.tips.every(t=>Math.hypot(t.px-tip.px,t.py-tip.py)>DET.rPix*.12))tip.robin=true;// 他の矢に刺さった・ぶら下がった
     hits.push(tip)}
   DET.known=DET.known.filter(k=>!k.gone);
-  if(!hits.length){done();if(!removed&&(!wob||dartLike))missing();return}
+  if(!hits.length){done();why('矢なし（抜いた'+removed+'・揺れ'+wob+'）');if(!removed&&(!wob||dartLike))missing();return}
   const top=hits[0].size;
   let use=hits.filter((h,i)=>i===0||h.size>=top*.4).sort((a,b)=>a.first-b.first);
   const want=DET.cb.remaining?DET.cb.remaining():3;use=use.slice(0,Math.max(0,want));
@@ -983,8 +985,23 @@ function detSettle(cur,small,peak){
     DET.tips.push({px:h.px,py:h.py});DET.sizes.push(h.size);if(DET.sizes.length>30)DET.sizes.shift();delete h.g;
     DET.marks.push(h)}
   if(DET.marks.length>6)DET.marks.splice(0,DET.marks.length-6);
-  done();if(use.length)DET.cb.onDart&&DET.cb.onDart(use)}
+  done();why('矢を検出 '+use.length+'本');if(use.length)DET.cb.onDart&&DET.cb.onDart(use)}
 
+
+/* 診断表示：状態表示（ゲーム）または「CAMERA SETUP」の下の文字（カメラ設定）をタップすると出る */
+const HUD={on:false,t:0};
+function hudToggle(){HUD.on=!HUD.on;$('#diagHud').classList.toggle('hidden',!HUD.on);clearInterval(HUD.t);if(HUD.on)HUD.t=setInterval(hudDraw,300),hudDraw()}
+function hudDraw(){const D=DET,[vw,vh]=vSize(),f=n=>n==null?'-':(+n).toFixed(1);
+  $('#diagHud').textContent=[
+   '状態 '+D.status+' / mode '+D.mode+(D.paused?' / 停止:'+D.paused:'')+(D.init?' / 開始待ち':''),
+   'コマ '+D.frame+'（間隔 '+Math.round(D.dt||0)+'ms・未準備 '+(D.notReady||0)+'）',
+   '動き '+D.lastMv+' / 基準 '+f(D.thr)+' / 静止 '+D.still+' / 動作中 '+(D.moving?'はい':'いいえ')+' / 最大 '+D.peak,
+   '動き開始から '+(D.moving?D.frame-D.moveStart:0)+'コマ / 強制判定 '+(D.forced||0)+'回',
+   'ブレ補正 '+(D.off?D.off.map(v=>v.toFixed(1)).join(','):'-')+(D.alignBad?'（失敗）':'')+' / 揺れ '+f((D.jitAmp||0))+'px',
+   '映像 '+vw+'×'+vh+'（rs'+D.rs+'）/ 処理 '+D.W+'×'+D.H+' / 盤 '+f(D.rPix)+'px',
+   '矢先の向き '+(D.tipDir?D.tipDir.map(v=>v.toFixed(2)).join(','):'-')+' / 設定 '+ST.settings.camSide+' / 感度 '+ST.settings.sens,
+   '最後の判定 '+(D.lastWhy||'-')+(D.lastWhyT?'（'+Math.round((Date.now()-D.lastWhyT)/1000)+'秒前）':'')
+  ].join('\n')}
 /* =========================================================
    映像オーバーレイ（ボード線・ハンドル・検出位置）
    ========================================================= */
@@ -1328,6 +1345,7 @@ function render(bump){const g=G.g;if(!g)return;const R=G.R=G.R||replay(g);
   const bc=$('#bChange');$('#bChangeT').textContent=R.ended?'RESULT':'CHANGE';bc.classList.toggle('blink',R.roundComplete||R.ended);
   if(!G.useCam)$('#statPill').querySelector('span:last-child').textContent=R.ended?'RESULTで結果へ（修正もできます）':ST.calib?'カメラが使えないため手動入力':'手動入力モード（カメラ未設定）'}
 $('#bUndo').onclick=undo;
+$('#statPill').onclick=hudToggle;$('#diagHud').onclick=hudToggle;$('#calSub').onclick=hudToggle;
 $('#bManual').onclick=()=>{if(G.R.ended)return;if(G.R.roundComplete){openPicker('次のラウンド：手動で入力',null,G.R.bm,d=>{if(d)addDart(d,false)});return}editDart(G.g.rounds.length-1,curRound().length)};
 $('#bChange').onclick=()=>{if(G.R.ended){finishGame();return}doChange(false)};
 $('#skipClear').onclick=()=>{if(G.R.roundComplete)doChange(true);else syncDet()};
