@@ -394,11 +394,12 @@ const CAL_NAMES=['20','6','3','11'];
 const TOPCOL={20:'#ff2e7e',19:'#22f2ff',18:'#ffc83d',17:'#3dffa2',16:'#a86bff',15:'#ff7a2e'};
 // ソフト15.5インチ盤の実測（ブル有効径44mm・インブル17mm・トリプル/ダブル有効幅18mm）をダブル外周基準の比率に換算
 const DEF_RINGS={ib:.045,ob:.115,ti:.55,to:.634,di:.916};
-const DEF_SETTINGS={bullMode:'fat',sound:true,fx:true,camSide:'right',sens:28,minBlob:6,rings:DEF_RINGS};
+const DEF_SETTINGS={bullMode:'fat',sound:true,fx:true,camSide:'auto',sens:28,minBlob:6,rings:DEF_RINGS};
 function load(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 const ST={settings:Object.assign({},DEF_SETTINGS,load('de_settings',{})),calib:load('de_calib',null),history:load('de_history',[]),lastOpts:load('de_lastopts',{})};
 ST.settings.rings=Object.assign({},DEF_RINGS,ST.settings.rings||{});
+if(!ST.settings.v8){ST.settings.camSide='auto';ST.settings.v8=1;try{localStorage.setItem('de_settings',JSON.stringify(ST.settings))}catch(e){}}
 const saveSettings=()=>save('de_settings',ST.settings);
 
 function toast(msg,ms=1800){const t=$('#toast');t.textContent=msg;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),ms)}
@@ -787,13 +788,23 @@ function detSetup(){const[vw,vh]=vSize();if(!vw||!ST.calib)return false;
   // ボード半径（処理画素）
   const c0=normPx(...applyH(Hb,0,0));let r=0;for(let i=0;i<16;i++){const a=i/16*Math.PI*2,p=normPx(...applyH(Hb,Math.sin(a),-Math.cos(a)));r+=Math.hypot(p[0]-c0[0],p[1]-c0[1])}DET.rPix=r/16;
   DET.tmap=new Int32Array(DET.N);DET.occ=new Uint8Array(DET.N);DET.occCore=new Uint8Array(DET.N);
+  // 矢先の向きを自動で決める：カメラに近い側ほどボードが大きく映る。矢先は「カメラに近い側」の端にある
+  {let vx=0,vy=0,rs=[];for(let k=0;k<16;k++){const a=k/16*Math.PI*2,p=normPx(...applyH(Hb,Math.sin(a),-Math.cos(a))),dx=p[0]-c0[0],dy=p[1]-c0[1];rs.push([dx,dy,Math.hypot(dx,dy)])}
+   const mr=rs.reduce((t,r)=>t+r[2],0)/16;for(const[dx,dy,r]of rs){vx+=dx/r*(r-mr);vy+=dy/r*(r-mr)}const m=Math.hypot(vx,vy);
+   DET.tipDir=m>mr*.04?[vx/m,vy/m]:[0,1]}
   return DET.roiN>100}
 const pxNorm=(x,y)=>[DET.crop.x+(x+.5)/DET.W*DET.crop.w,DET.crop.y+(y+.5)/DET.H*DET.crop.h];
 const normPx=(nx,ny)=>[(nx-DET.crop.x)/DET.crop.w*DET.W-.5,(ny-DET.crop.y)/DET.crop.h*DET.H-.5];
 const effMin=()=>Math.max(4,Math.round(ST.settings.minBlob*Math.pow(DET.rPix/46,2)));
 function grabRaw(){const W=DET.W,H=DET.H,N=DET.N,[vw,vh]=vSize(),c=DET.crop;
+  DET.ctx.imageSmoothingEnabled=true;DET.ctx.imageSmoothingQuality='high';
   DET.ctx.drawImage(DET.src||CAM.v,c.x*vw,c.y*vh,c.w*vw,c.h*vh,0,0,W,H);
-  const d=DET.ctx.getImageData(0,0,W,H).data,g=new Uint8Array(N*3);for(let i=0,j=0;i<N;i++,j+=4){g[i]=d[j];g[i+N]=d[j+1];g[i+2*N]=d[j+2]}return g}
+  const d=DET.ctx.getImageData(0,0,W,H).data,g=new Uint8Array(N*3),t=new Float32Array(N);
+  // 盤面の細かい穴模様やセンサーのノイズが「動き」に見えないよう、3x3でならしてから使う
+  for(let ch=0;ch<3;ch++){const o=ch*N;
+    for(let y=0;y<H;y++){const r=y*W;for(let x=0;x<W;x++){const xl=x>0?x-1:x,xr=x<W-1?x+1:x;t[r+x]=(d[(r+xl)*4+ch]+2*d[(r+x)*4+ch]+d[(r+xr)*4+ch])*.25}}
+    for(let y=0;y<H;y++){const yu=y>0?y-1:y,yd=y<H-1?y+1:y;for(let x=0;x<W;x++)g[o+y*W+x]=(t[yu*W+x]+2*t[y*W+x]+t[yd*W+x])*.25}}
+  return g}
 /* ---- ブレ補正（三脚の揺れ・ゆっくりしたズレ） ----
    基準画像（DET.anchor）に対して、いまのコマが何ピクセルずれたかを毎回計算し、元の位置に戻してから判定に使う。
    ① 前回のズレを中心に ±7px を粗く探索（輪郭のある画素だけで比較）→ ② 小数点以下まで補間 → ③ 補間で並べ直す */
@@ -847,8 +858,8 @@ function pdT(a,b,i,N,g,T){// 位置合わせの残り（半ピクセル以内）
     const x=a[i+o],e=x>mx?x-mx:x<mn?mn-x:0;if(e>worst)worst=e}
   return worst}
 function isShadow(a,b,i,N,g){const r0=(a[i]+2)/(b[i]*g[0]+2),r1=(a[i+N]+2)/(b[i+N]*g[1]+2),r2=(a[i+2*N]+2)/(b[i+2*N]*g[2]+2),mx=Math.max(r0,r1,r2),mn=Math.min(r0,r1,r2);return mx<.9&&mn>.3&&mx-mn<.14}
-function motion(a,b){// ノイズに強いよう、隣にも変化がある画素だけ数える
-  const W=DET.W,N=DET.N,T=ST.settings.sens;let c=0;
+function motion(a,b){// ノイズに強いよう、隣にも変化がある画素だけ数える（露出のゆらぎは明るさの比で補正）
+  const W=DET.W,N=DET.N,T=ST.settings.sens,G1=gains(a,b);let c=0;
   for(let i=W+1;i<N-W-1;i++){if(!DET.roi[i])continue;if(pdT(a,b,i,N,G1,T)>T&&(pdT(a,b,i+1,N,G1,T)>T||pdT(a,b,i+W,N,G1,T)>T))c++}return c}
 function diffMask(a,b,g){const W=DET.W,H=DET.H,N=DET.N,T=ST.settings.sens;g=g||gains(a,b);const m=new Uint8Array(N);
   for(let i=W+1;i<N-W-1;i++)if(DET.roi[i]&&pdT(a,b,i,N,g,T)>T)m[i]=1;
@@ -870,7 +881,7 @@ function groupComps(cs){// 近い塊（胴・フライト・影の切れ端）�
   // まとめた結果さらに近くなったものを再結合
   for(let k=0;k<3;k++)for(let i=0;i<gs.length;i++)for(let j=i+1;j<gs.length;j++)if(near(gs[i],gs[j])){const a=gs[i],b=gs[j];a.px=a.px.concat(b.px);a.x0=Math.min(a.x0,b.x0);a.y0=Math.min(a.y0,b.y0);a.x1=Math.max(a.x1,b.x1);a.y1=Math.max(a.y1,b.y1);gs.splice(j,1);j--}
   return gs.sort((a,b)=>b.px.length-a.px.length)}
-function tipOf(px,cur,ref,g){const W=DET.W,N=DET.N,s=ST.settings.camSide,dir=s==='left'?[-1,.35]:s==='right'?[1,.35]:[0,1];
+function tipOf(px,cur,ref,g){const W=DET.W,N=DET.N,s=ST.settings.camSide,dir=s==='auto'&&DET.tipDir?DET.tipDir:s==='left'?[-1,.35]:s==='right'?[1,.35]:[0,1];
   let cand=px.filter(i=>!isShadow(cur,ref,i,N,g));if(cand.length<4)cand=px;
   const arr=cand.map(i=>{const x=i%W,y=(i/W)|0;return[x*dir[0]+y*dir[1],x,y,i]}).sort((a,b)=>b[0]-a[0]).slice(0,4);
   const x=arr.reduce((s,a)=>s+a[1],0)/arr.length,y=arr.reduce((s,a)=>s+a[2],0)/arr.length;
@@ -894,10 +905,10 @@ function detStep(){if(!DET.on||DET.paused)return;const s=DET.src||CAM.v;if(s.rea
   DET.frame++;
   const mv=DET.alignBad?DET.roiN:motion(cur,DET.prev);DET.prev=cur;DET.lastMv=mv;
   // 揺れの大きさに合わせて「止まった」とみなす基準を自動で変える（静かなときの動き量の中央値×3）
-  const nh=DET.noiseH,base=nh.length>=5?nh.slice().sort((a,b)=>a-b)[nh.length>>1]:0,thr=Math.max(3,ST.settings.minBlob*.5,base*3+2);
-  if(mv<thr){nh.push(mv);if(nh.length>40)nh.shift()}
+  const nh=DET.noiseH;if(!DET.alignBad){nh.push(mv);if(nh.length>45)nh.shift()}
+  const srt=nh.slice().sort((a,b)=>a-b),base=nh.length>=8?srt[Math.floor(nh.length*.3)]:0,thr=Math.max(3,ST.settings.minBlob*.5,base*2.5+3);DET.thr=thr;
   // 待ち続け防止：小さな動きが2.3秒以上続いたら（人や手が映っていない）、そこで判定する
-  if(mv>=thr&&DET.moving&&!DET.init&&DET.frame-DET.moveStart>25&&mv<DET.roiN*.015&&DET.lastBig<DET.frame-6){DET.noiseH.push(mv);if(DET.noiseH.length>40)DET.noiseH.shift();DET.still=5}
+  if(mv>=thr&&DET.moving&&DET.frame-DET.moveStart>25&&mv<DET.roiN*.015&&DET.lastBig<DET.frame-6){DET.still=DET.init?6:5;DET.moving=!DET.init}
   else if(mv>=thr){
     if(!DET.moving)DET.moveStart=DET.frame;if(mv>=DET.roiN*.015)DET.lastBig=DET.frame;
     DET.moving=true;DET.still=0;DET.idle=0;DET.peak=Math.max(DET.peak,mv);
@@ -1121,7 +1132,7 @@ function buildCalSettings(){
   $('#ringSliders').innerHTML=defs.map(([k,l])=>'<div class="sl-row"><span>'+l+'</span><input type="range" data-ring="'+k+'" min="0.02" max="0.99" step="0.002" value="'+ST.settings.rings[k]+'"><output>'+(+ST.settings.rings[k]).toFixed(3)+'</output></div>').join('')+'<button class="btn" id="ringReset">初期値に戻す</button>';
   $$('[data-ring]').forEach(s=>s.oninput=()=>{ST.settings.rings[s.dataset.ring]=+s.value;s.nextElementSibling.textContent=(+s.value).toFixed(3);saveSettings()});
   $('#ringReset').onclick=()=>{ST.settings.rings=Object.assign({},DEF_RINGS);saveSettings();buildCalSettings()};
-  segCtl($('#camSideSeg'),[['left','左'],['right','右'],['down','下']],ST.settings.camSide,v=>{ST.settings.camSide=v;saveSettings()});
+  segCtl($('#camSideSeg'),[['auto','自動'],['left','左'],['right','右'],['down','下']],ST.settings.camSide,v=>{ST.settings.camSide=v;saveSettings()});
   for(const k of['sens','minBlob']){const s=$('#'+k);s.value=ST.settings[k];$('#'+k+'O').textContent=s.value;s.oninput=()=>{ST.settings[k]=+s.value;$('#'+k+'O').textContent=s.value;saveSettings()}}
   $('#dbgMask').checked=OV.dbg;$('#dbgMask').onchange=e=>OV.dbg=e.target.checked}
 function segCtl(el,vals,cur,on){el.innerHTML=vals.map(([v,l])=>'<button data-v="'+v+'" class="'+(String(v)===String(cur)?'on':'')+'">'+l+'</button>').join('');
