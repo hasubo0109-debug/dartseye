@@ -1082,10 +1082,12 @@ function autoDetect(src,sw,sh){
   let E=fitEllipse(P);if(!E)return{ok:false,why:'fit'};
   for(let it=0;it<2;it++){const res=P.map(p=>{const th=Math.atan2(p[1]-E.cy,p[0]-E.cx);return Math.abs(Math.hypot(p[0]-E.cx,p[1]-E.cy)-ellR(E,th))});
     const srt=res.slice().sort((a,b)=>a-b),lim=Math.max(1.5,srt[Math.floor(srt.length*.8)]*1.5);P=P.filter((p,k)=>res[k]<=lim);const E2=fitEllipse(P);if(E2)E=E2}
-  // 楕円の少し内側を一周して色を2グループに分ける
+  // 楕円の少し内側を一周して色を2グループに分ける（リングの太さ方向に3か所読み、暗めの色も拾う）
   const M=720,hs=[],pts=[];let colored=0;
-  for(let k=0;k<M;k++){const th=k/M*2*Math.PI,r=ellR(E,th),sx=E.cx+Math.cos(th)*r*.955,sy=E.cy+Math.sin(th)*r*.955;pts.push([E.cx+Math.cos(th)*r,E.cy+Math.sin(th)*r]);
-    const xi=Math.round(sx),yi=Math.round(sy);if(xi<0||yi<0||xi>=W||yi>=H){hs.push(null);continue}const i=yi*W+xi;if(col[i]){hs.push(hue[i]);colored++}else hs.push(null)}
+  for(let k=0;k<M;k++){const th=k/M*2*Math.PI,r=ellR(E,th);pts.push([E.cx+Math.cos(th)*r,E.cy+Math.sin(th)*r]);let sx=0,sy=0,cnt=0;
+    for(const f of[.94,.958,.976]){const xi=Math.round(E.cx+Math.cos(th)*r*f),yi=Math.round(E.cy+Math.sin(th)*r*f);if(xi<0||yi<0||xi>=W||yi>=H)continue;const j=(yi*W+xi)*4,[h,s2,v]=rgb2hs(D[j],D[j+1],D[j+2]);
+      if(s2>.28&&v>32){const a=h*Math.PI/180;sx+=Math.cos(a)*s2;sy+=Math.sin(a)*s2;cnt++}}
+    if(cnt){hs.push((Math.atan2(sy,sx)*180/Math.PI+360)%360);colored++}else hs.push(null)}
   if(colored<M*.6)return{ok:false,why:'color'};
   // 色相を2つに分ける（円周上のk-means）
   const hv=hs.filter(h=>h!=null);let c1=hv[0],c2=(c1+180)%360;const hd=(a,b)=>{const d=Math.abs(a-b)%360;return d>180?360-d:d};
@@ -1096,7 +1098,16 @@ function autoDetect(src,sw,sh){
   // 欠けを埋めてノイズをならす（多数決）
   for(let k=0;k<M;k++)if(labs[k]<0){for(let d=1;d<12;d++){const a=labs[(k-d+M)%M],b=labs[(k+d)%M];if(a>=0){labs[k]=a;break}if(b>=0){labs[k]=b;break}}}
   const sm=labs.map((_,k)=>{let s=0;for(let d=-4;d<=4;d++)s+=labs[(k+d+M)%M];return s>4?1:0});
-  const tr=[];for(let k=0;k<M;k++)if(sm[k]!==sm[(k+M-1)%M])tr.push(k-.5);
+  let tr=[];for(let k=0;k<M;k++)if(sm[k]!==sm[(k+M-1)%M])tr.push(k-.5);
+  // 数え損ね・数えすぎの補正：まわりの間隔と比べて、狭すぎる区切りは消し、広すぎる所には区切りを足す
+  if(tr.length!==20&&tr.length>=14&&tr.length<=26){
+    for(let it=0;it<8&&tr.length!==20;it++){const n=tr.length,gap=k=>((tr[(k+1)%n]-tr[k])+M)%M;
+      const loc=k=>{const g=[];for(let d=-2;d<=2;d++)if(d)g.push(gap((k+d+n)%n));g.sort((a,b)=>a-b);return(g[1]+g[2])/2};
+      let worst=-1,wv=0,kind=0;for(let k=0;k<n;k++){const r=gap(k)/loc(k);if(r<.5&&(1/r)>wv){wv=1/r;worst=k;kind=-1}else if(r>1.55&&r>wv){wv=r;worst=k;kind=1}}
+      if(worst<0)break;
+      if(kind<0){// 狭すぎる2本をまとめる
+        const a=tr[worst],b=tr[(worst+1)%n];const mid=b>=a?(a+b)/2:((a+b+M)/2)%M;tr.splice(worst,1);const j=tr.indexOf(b);if(j>=0)tr[j]=mid;tr.sort((x,y)=>x-y)}
+      else{const g=gap(worst),m=Math.round(g/loc(worst));for(let t=1;t<m;t++)tr.push((tr[worst]+g*t/m)%M);tr.sort((x,y)=>x-y)}}}
   if(tr.length!==20)return{ok:false,why:'seg',n:tr.length};
   // 境目の点（外周上）と、区画の向き
   const tp=tr.map(k=>{const th=(k/M)*2*Math.PI,r=ellR(E,th);return[E.cx+Math.cos(th)*r,E.cy+Math.sin(th)*r]});
